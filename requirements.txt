@@ -1,0 +1,6 @@
+Pillow>=11.0.0
+cryptography>=45.0.0
+numpy>=2.0.0
+tqdm>=4.67.0
+colorama>=0.4.6
+pytest>=8.0.0
