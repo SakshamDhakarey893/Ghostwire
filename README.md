@@ -8,23 +8,26 @@ GhostWire is a Python-based steganography framework designed to securely conceal
 
 ## Features
 
-### Current (v1.0)
+### Current Features
 
-- PNG image steganography
-- Randomized LSB embedding
+- PNG image steganography (RGB / RGBA)
+- WAV audio steganography (uncompressed PCM audio)
+- Randomized LSB embedding across pixel channels & audio samples
 - Password-protected payloads
-- AES-256-GCM encryption
-- PBKDF2 key derivation
-- SHA256 integrity verification
+- AES-256-GCM authenticated encryption
+- PBKDF2 key derivation (600,000 iterations)
+- SHA-256 integrity verification
 - Payload compression using zlib
-- Command-line interface
+- Full arbitrary file embedding support
+- Unified Command-line interface (CLI)
 
-### Planned (v2.0)
+### Planned
 
-- Audio steganography (WAV)
-- File embedding support
-- Metadata handling
-- Logging and progress tracking
+- Logging and live progress tracking (tqdm / colorama)
+- Video steganography
+- Multi-carrier payload splitting
+- Steganalysis module
+- Modern Desktop GUI application
 
 ### Planned (v3.0)
 
@@ -64,6 +67,7 @@ ghostwire/
 │
 ├── core/
 │   ├── image_stego.py
+│   ├── audio_stego.py
 │   ├── crypto.py
 │   ├── compression.py
 │   ├── integrity.py
@@ -72,7 +76,8 @@ ghostwire/
 │   └── utils.py
 │
 ├── carriers/
-│   └── images/
+│   ├── images/
+│   └── audio/
 │
 ├── payloads/
 │

@@ -64,9 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     embed_parser = subparsers.add_parser(
         "embed",
-        help="Hide a payload inside a PNG image.",
+        help="Hide a payload inside a digital carrier (PNG or WAV).",
         description=(
-            "Encrypt and hide a payload inside a PNG "
+            "Encrypt and hide a payload inside a PNG image or WAV audio file "
             "using randomized LSB steganography."
         ),
     )
@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--carrier",
         required=True,
         type=Path,
-        help="Path to the carrier PNG.",
+        help="Path to the carrier media (PNG or WAV).",
     )
 
     embed_parser.add_argument(
@@ -92,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         required=True,
         type=Path,
-        help="Path for the output PNG.",
+        help="Path for the output stego media (PNG or WAV).",
     )
 
     embed_parser.add_argument(
@@ -110,10 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     extract_parser = subparsers.add_parser(
         "extract",
-        help="Extract a hidden payload from a PNG image.",
+        help="Extract a hidden payload from a digital carrier (PNG or WAV).",
         description=(
             "Extract and decrypt a payload from a "
-            "GhostWire PNG."
+            "GhostWire PNG or WAV carrier."
         ),
     )
 
@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--carrier",
         required=True,
         type=Path,
-        help="Path to the GhostWire PNG.",
+        help="Path to the GhostWire carrier (PNG or WAV).",
     )
 
     extract_parser.add_argument(

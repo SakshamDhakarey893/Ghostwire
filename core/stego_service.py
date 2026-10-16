@@ -7,6 +7,7 @@ and PNG LSB embedding/extraction.
 
 from pathlib import Path
 
+from core.audio_stego import AudioStego
 from core.image_stego import ImageStego
 from core.packet import HEADER_SIZE, PacketHeader
 from core.payload import PayloadProcessor
@@ -19,6 +20,16 @@ from .validation import (
     validate_password,
     validate_payload,
 )
+
+
+def get_carrier_engine(carrier_path: Path) -> ImageStego | AudioStego:
+    """Return the appropriate steganography engine for the carrier file."""
+    ext = carrier_path.suffix.lower()
+    if ext == ".png":
+        return ImageStego(carrier_path)
+    if ext == ".wav":
+        return AudioStego(carrier_path)
+    raise ValueError(f"Unsupported carrier format: {ext}")
 
 
 class StegoService:
@@ -82,7 +93,7 @@ class StegoService:
 
         packet = prepared.packet
 
-        stego = ImageStego(carrier_path)
+        stego = get_carrier_engine(carrier_path)
 
         capacity = stego.calculate_capacity(
             carrier_path
@@ -92,7 +103,7 @@ class StegoService:
 
         if required_bits > capacity:
             raise ValueError(
-                "Carrier image does not have enough capacity "
+                "Carrier does not have enough capacity "
                 "for the payload."
             )
 
@@ -150,7 +161,7 @@ class StegoService:
             exist_ok=True,
         )
 
-        stego = ImageStego(carrier_path)
+        stego = get_carrier_engine(carrier_path)
 
         capacity = stego.calculate_capacity(
             carrier_path

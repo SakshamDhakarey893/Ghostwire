@@ -36,14 +36,17 @@ def validate_payload(payload_path: Path) -> None:
         )
 
 
+SUPPORTED_CARRIER_EXTENSIONS = {".png", ".wav"}
+
+
 def validate_carrier(carrier_path: Path) -> None:
     """
-    Validate the carrier image.
+    Validate the carrier media file (PNG image or WAV audio).
     """
 
     if not carrier_path.exists():
         raise ValidationError(
-            f"Carrier image does not exist: {carrier_path}"
+            f"Carrier file does not exist: {carrier_path}"
         )
 
     if not carrier_path.is_file():
@@ -51,9 +54,11 @@ def validate_carrier(carrier_path: Path) -> None:
             f"Carrier path is not a file: {carrier_path}"
         )
 
-    if carrier_path.suffix.lower() != ".png":
+    ext = carrier_path.suffix.lower()
+    if ext not in SUPPORTED_CARRIER_EXTENSIONS:
         raise ValidationError(
-            "Carrier image must be a PNG file."
+            f"Unsupported carrier format: {carrier_path.suffix}. "
+            "Carrier must be a PNG image or WAV audio file."
         )
 
 
@@ -62,17 +67,26 @@ def validate_output_path(
     carrier_path: Path,
 ) -> None:
     """
-    Validate the output image path.
+    Validate the output carrier path.
     """
 
-    if output_path.suffix.lower() != ".png":
+    carrier_ext = carrier_path.suffix.lower()
+    output_ext = output_path.suffix.lower()
+
+    if output_ext not in SUPPORTED_CARRIER_EXTENSIONS:
         raise ValidationError(
-            "Output image must use the .png extension."
+            f"Unsupported output format: {output_path.suffix}. "
+            "Output must be a PNG image or WAV audio file."
+        )
+
+    if output_ext != carrier_ext:
+        raise ValidationError(
+            f"Output file extension ({output_ext}) must match carrier extension ({carrier_ext})."
         )
 
     if output_path.resolve() == carrier_path.resolve():
         raise ValidationError(
-            "Output image cannot be the same as the carrier image."
+            "Output file cannot be the same as the carrier file."
         )
 
     if output_path.exists():
