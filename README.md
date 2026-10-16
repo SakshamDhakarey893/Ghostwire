@@ -2,7 +2,7 @@
 
 > Hide. Encrypt. Transmit. Undetected.
 
-GhostWire is an advanced Python steganography framework engineered to securely conceal encrypted, compressed payloads inside digital media (PNG images and WAV audio) using randomized Least Significant Bit (LSB) embedding, authenticated AES-256-GCM encryption, PBKDF2 key derivation, and cryptographic integrity verification.
+GhostWire is an advanced Python steganography and steganalysis framework engineered to securely conceal encrypted, compressed payloads inside digital media (PNG images and WAV audio) using randomized Least Significant Bit (LSB) embedding, authenticated AES-256-GCM encryption, PBKDF2 key derivation, multi-carrier splitting, and forensic steganalysis detection.
 
 ---
 
@@ -21,46 +21,25 @@ GhostWire is an advanced Python steganography framework engineered to securely c
 - **SHA-256 Integrity Verification**: Cryptographic payload hash verified with constant-time comparison (`hmac.compare_digest`).
 - **High-Efficiency Compression**: Pre-encryption `zlib` compression (level 9) minimizing carrier footprint.
 
+### Multi-Carrier Splitting
+- **Proportional Capacity Partitioning**: Large payloads are partitioned dynamically according to the individual capacities of each supplied carrier.
+- **Mixed Media Support**: Combine images and audio tracks into a unified bundle (e.g., 2 PNGs + 1 WAV).
+- **Bundle Integrity & Sequencing**: Cryptographic 16-byte bundle UUIDs and sequence indices ensure complete reassembly and detect missing or duplicate fragments.
+
+### Forensic Steganalysis Suite
+- **Chi-Square ($\chi^2$) PoVs Analysis**: Tests adjacent Pairs of Values for artificial frequency equalization.
+- **Sample Pair Analysis (SPA)**: Calculates adjacent sample transition probabilities to estimate hidden data ratios.
+- **Spatial / Temporal Block Entropy**: Evaluates local Shannon entropy variance across blocks to detect clustered or sequential steganography.
+- **Visual Bitplane Dumper**: Exports high-contrast 1-bit LSB maps (`--dump-lsb`) for visual inspection.
+
 ### Command-Line Interface (CLI)
 - **`capacity`**: Instant capacity and metadata inspection for PNG and WAV files.
-- **`embed`**: Secure embedding with interactive hidden password entry, `-f/--force` overwrite, and `-v/--verbose` diagnostic mode.
-- **`extract`**: Decryption and recovery to target directories or explicit filenames with overwrite control.
+- **`embed`**: Single carrier embedding with password confirmation, `--force`, and `--verbose`.
+- **`extract`**: Recovery to target directories or explicit filenames with single or multi-carrier auto-detection.
+- **`split-embed`**: Proportional multi-carrier embedding across 2 or more media carriers.
+- **`split-extract`**: Re-assembly and extraction from multi-carrier bundles.
+- **`analyze`**: Forensic steganalysis report with Chi-Square, SPA, entropy metrics, and visual LSB map export.
 - **Live Progress Tracking**: Integrated `tqdm` progress bars for operations exceeding 50 KB.
-
----
-
-## Architecture & Data Flow
-
-```text
-Payload File
-     ↓
-SHA-256 Integrity Digest
-     ↓
-zlib Compression (Level 9)
-     ↓
-AES-256-GCM Encryption (Random Nonce + Tag)
-     ↓
-Binary Metadata Packaging (Filename, Original Size, SHA-256)
-     ↓
-Protocol v2 Framing (Magic 'GW' + Version 2 + 16-byte Salt + Packet Size)
-     ↓
-Triple-Factor Salted Position Generation (Password + MSB Fingerprint + Salt)
-     ↓
-Randomized LSB Embedding (Zero Collision)
-     ↓
-Stego Media Carrier (PNG / WAV)
-```
-
-### Protocol v2 Packet Layout
-
-```text
-[0..1]   Magic Bytes (b"GW")
-[2]      Protocol Version (0x02)
-[3]      Flags (0x00)
-[4..7]   Packet Size (32-bit unsigned uint)
-[8..23]  Random Position Salt (16 bytes)
-[24..]   Body: [4-byte Metadata Len] + [Metadata Packet] + [Salt + Nonce + Ciphertext + Tag]
-```
 
 ---
 
@@ -105,30 +84,11 @@ Before embedding, check how much data your carrier image or audio file can hold:
 python ghostwire.py capacity -c carriers/images/photo.png
 ```
 
-**Example Output:**
-```text
-[+] Carrier File: C:\Users\...\carriers\images\photo.png
-    - Media Type: Image (PNG)
-    - Dimensions: 1920 x 1080 pixels
-    - Color Mode: RGB (Using 3 color channels)
-
-[+] Steganographic Capacity (1-bit LSB):
-    - Raw Bits:   6,220,800 bits
-    - Raw Bytes:  777,600 bytes
-    - Safe Size:  ~738.72 KB (accounting for metadata & encryption overhead)
-```
-
-Audio carriers work identically:
-
-```bash
-python ghostwire.py capacity -c carriers/audio/song.wav
-```
-
 ---
 
-### 2. Embed a Secret Payload
+### 2. Embed a Secret Payload (Single Carrier)
 
-Hide any file (PDF, TXT, ZIP, executable, etc.) inside an image or audio track:
+Hide any file inside an image or audio track:
 
 ```bash
 python ghostwire.py embed \
@@ -137,17 +97,10 @@ python ghostwire.py embed \
   -o output/stego_landscape.png
 ```
 
-You will be prompted securely for a password. You can also specify `--password`, `--force` (to overwrite), and `--verbose`:
-
-```bash
-python ghostwire.py embed \
-  -p payloads/secret.txt \
-  -c carriers/audio/track.wav \
-  -o output/stego_audio.wav \
-  --password "CorrectHorseBatteryStaple123" \
-  --force \
-  --verbose
-```
+Options:
+- `--password`: Pass password directly or omit for a hidden prompt.
+- `-f / --force`: Overwrite output file if it already exists.
+- `-v / --verbose`: Print diagnostic details (fingerprint, salt, bit allocations).
 
 ---
 
@@ -156,17 +109,75 @@ python ghostwire.py embed \
 Recover the hidden file from a stego carrier:
 
 ```bash
-# Extract to a directory (preserves original filename stored in metadata)
+# Extract to a directory (preserves original filename)
 python ghostwire.py extract \
   -c output/stego_landscape.png \
   -o output/recovered/
 
-# Or specify an explicit target filename
+# Or extract directly to an explicit target filename
 python ghostwire.py extract \
-  -c output/stego_audio.wav \
+  -c output/stego_landscape.png \
   -o output/recovered_document.pdf \
   --password "CorrectHorseBatteryStaple123" \
   --force
+```
+
+---
+
+### 4. Multi-Carrier Payload Splitting (Proportional Distribution)
+
+When a payload is too large for a single carrier, or for operational security, split it across multiple image and audio files:
+
+```bash
+python ghostwire.py split-embed \
+  -p payloads/large_database.zip \
+  -c carriers/images/photo1.png carriers/audio/song.wav carriers/images/photo2.png \
+  -o output/stego1.png output/stego2.wav output/stego3.png \
+  --password "MultiCarrierSecretKey"
+```
+
+To reconstruct the original payload, supply all carrier parts (in any order):
+
+```bash
+python ghostwire.py split-extract \
+  -c output/stego3.png output/stego1.png output/stego2.wav \
+  -o output/recovered_database.zip \
+  --password "MultiCarrierSecretKey"
+```
+
+*(Note: Standard `ghostwire extract -c stego1.png stego2.wav stego3.png -o output/` also automatically detects and reconstructs multi-carrier bundles!)*
+
+---
+
+### 5. Forensic Steganalysis & LSB Map Export
+
+Audit an image or audio file for suspicious hidden data, sequential LSB anomalies, or tampering:
+
+```bash
+python ghostwire.py analyze -c suspicious_image.png --dump-lsb lsb_visual_map.png --verbose
+```
+
+**Example Output:**
+```text
+[*] Running Steganalysis on: C:\Users\...\suspicious_image.png...
+[+] Media Type: Image (PNG)
+
+[+] Forensic Metrics:
+    1. Chi-Square (Pairs of Values) Statistic: 118.42 (DoF: 127)
+       -> p-value: 0.697412
+    2. LSB Transition Rate: 0.3218 (Uniform random baseline: 0.5000)
+       -> Estimated Embedding Rate: 10.9%
+    3. Local Block LSB Entropy: 0.8924 / 1.0000
+       -> Spatial Variance: 0.001245
+
+[+] Detailed Findings:
+    - Chi-Square PoVs p-value (0.6974) reflects natural intensity distribution.
+    - LSB transition rate (0.3218) shows healthy spatial/temporal sample correlation.
+    - Block entropy variance (0.001245) indicates uniform spatial distribution.
+
+[+] Forensic Verdict: CLEAN (No sequential steganographic anomalies detected)
+[+] Confidence Level: HIGH
+[+] Visual LSB Bitplane Map exported: C:\Users\...\lsb_visual_map.png
 ```
 
 ---
@@ -178,36 +189,22 @@ python ghostwire.py extract \
 | **PNG Image** | $\text{Width} \times \text{Height} \times 3 \text{ bits}$ | $\approx \frac{\text{Width} \times \text{Height} \times 3}{8} - 150 \text{ bytes}$ |
 | **WAV Audio** | $\text{Frames} \times \text{Channels} \text{ bits}$ | $\approx \frac{\text{Frames} \times \text{Channels}}{8} - 150 \text{ bytes}$ |
 
-*Fixed Overhead*:
-- Bootstrap Header v2: 24 bytes
-- Metadata Envelope: ~50–80 bytes (depends on filename length)
-- AES-256-GCM Nonce & Tag: 28 bytes
-- PBKDF2 Salt: 16 bytes
-
 ---
 
 ## Security Model & Steganalysis Resistance
 
-1. **Defense Against Carrier Re-Use**:
-   Standard LSB steganography uses a static seed `SHA256(password)`, which embeds bits in the exact same positions regardless of carrier. GhostWire binds positions to an invariant MSB hash of the carrier plus a cryptographically generated 16-byte random salt.
+1. **Carrier Re-Use Immunity**:
+   Unlike standard tools that reuse static seeds, GhostWire binds embedding positions to an invariant MSB hash of the carrier plus a cryptographically generated 16-byte random salt.
 2. **Chi-Square Uniformity**:
-   Because the payload is encrypted with AES-256-GCM prior to embedding, the embedded bitstream has maximum entropy ($p \approx 0.5$ for bit 0 vs 1). Combined with PRNG sampling across the entire carrier, modifications are uniformly distributed rather than clustered in top scanlines, defeating naive visual, frequency, and sample-pair steganalysis.
+   Because the payload is encrypted with AES-256-GCM prior to embedding, the embedded bitstream has maximum entropy ($p \approx 0.5$). Combined with PRNG sampling across the entire carrier, modifications are uniformly distributed rather than clustered in top scanlines, defeating naive visual, frequency, and sample-pair steganalysis.
 3. **Tamper Proofing**:
    Any modification to the stego carrier (flipping a bit or altering audio samples) will cause either bootstrap header validation to fail or AES-256-GCM authentication tag verification to fail (`InvalidTag`), preventing execution of corrupted or tampered payloads.
 
 ---
 
-## Current Limitations
-
-- **Lossless Only**: Carriers must remain lossless. Converting a stego PNG to JPEG or a stego WAV to MP3 destroys the least significant bit plane and renders payloads unrecoverable.
-- **Uncompressed PCM Audio**: Only uncompressed PCM WAV files are supported (8-bit, 16-bit, 24-bit, 32-bit). Compressed WAV formats (such as ADPCM) are rejected.
-- **Single Carrier**: Payloads cannot currently be split across multiple carriers (planned for v3.0).
-
----
-
 ## Running the Test Suite
 
-GhostWire includes a 64-test automated suite covering cryptography, framing, steganography engines, capacity estimation, steganalysis, and CLI integration.
+GhostWire includes a 73-test automated suite covering cryptography, framing, steganography engines, capacity estimation, multi-carrier splitting, steganalysis, and CLI integration.
 
 ```bash
 pytest -v

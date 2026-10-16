@@ -1,7 +1,7 @@
 """
 GhostWire
 ---------
-Randomized LSB steganography command-line tool.
+Randomized LSB steganography and steganalysis command-line tool.
 """
 
 from __future__ import annotations
@@ -11,10 +11,12 @@ import getpass
 import sys
 from pathlib import Path
 
+from core.multi_carrier import MultiCarrierService
+from core.steganalysis import Steganalyzer
 from core.stego_service import StegoService
 from core.validation import ValidationError
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -58,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="ghostwire",
-        description="GhostWire — Professional Randomized LSB Steganography Framework",
+        description="GhostWire — Professional Steganography, Multi-Carrier Splitting & Steganalysis Framework",
     )
 
     parser.add_argument(
@@ -91,11 +93,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # ================================================================
-    # EMBED
+    # ANALYZE (STEGANALYSIS)
+    # ================================================================
+    analyze_parser = subparsers.add_parser(
+        "analyze",
+        help="Run forensic steganalysis on a PNG image or WAV audio file.",
+        description="Perform Chi-Square (PoVs), Sample Pair Analysis, and LSB entropy detection.",
+    )
+
+    analyze_parser.add_argument(
+        "-c",
+        "--carrier",
+        required=True,
+        type=Path,
+        help="Path to the carrier media to inspect (PNG or WAV).",
+    )
+
+    analyze_parser.add_argument(
+        "--dump-lsb",
+        type=Path,
+        default=None,
+        help="Optional output path to export visual 1-bit LSB plane map (PNG only).",
+    )
+
+    analyze_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Display detailed statistical metrics and test breakdowns.",
+    )
+
+    # ================================================================
+    # EMBED (SINGLE CARRIER)
     # ================================================================
     embed_parser = subparsers.add_parser(
         "embed",
-        help="Hide a payload inside a digital carrier (PNG or WAV).",
+        help="Hide a payload inside a single digital carrier (PNG or WAV).",
         description=(
             "Encrypt and hide a payload inside a PNG image or WAV audio file "
             "using randomized LSB steganography."
@@ -147,23 +180,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # ================================================================
-    # EXTRACT
+    # EXTRACT (SINGLE OR MULTI-CARRIER AUTO-DETECT)
     # ================================================================
     extract_parser = subparsers.add_parser(
         "extract",
-        help="Extract a hidden payload from a digital carrier (PNG or WAV).",
+        help="Extract a hidden payload from digital carriers (PNG or WAV).",
         description=(
-            "Extract and decrypt a payload from a "
-            "GhostWire PNG or WAV carrier."
+            "Extract and decrypt a payload from GhostWire PNG or WAV carriers."
         ),
     )
 
     extract_parser.add_argument(
         "-c",
         "--carrier",
+        "--carriers",
+        dest="carriers",
+        nargs="+",
         required=True,
         type=Path,
-        help="Path to the GhostWire carrier (PNG or WAV).",
+        help="Path to one or more GhostWire carriers (PNG or WAV).",
     )
 
     extract_parser.add_argument(
@@ -196,13 +231,112 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable verbose diagnostic logging.",
     )
 
+    # ================================================================
+    # SPLIT-EMBED (MULTI-CARRIER)
+    # ================================================================
+    split_embed_parser = subparsers.add_parser(
+        "split-embed",
+        help="Split and embed a large payload across multiple digital carriers.",
+        description="Partition an encrypted payload proportionally across 2 or more PNG/WAV carriers.",
+    )
+
+    split_embed_parser.add_argument(
+        "-p",
+        "--payload",
+        required=True,
+        type=Path,
+        help="Path to the secret payload file.",
+    )
+
+    split_embed_parser.add_argument(
+        "-c",
+        "--carriers",
+        required=True,
+        nargs="+",
+        type=Path,
+        help="List of 2 or more carrier paths (PNG or WAV).",
+    )
+
+    split_embed_parser.add_argument(
+        "-o",
+        "--outputs",
+        required=True,
+        nargs="+",
+        type=Path,
+        help="List of destination output paths matching each carrier.",
+    )
+
+    split_embed_parser.add_argument(
+        "--password",
+        default=None,
+        help="Encryption password. If omitted, GhostWire prompts securely.",
+    )
+
+    split_embed_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Overwrite output files if they already exist.",
+    )
+
+    split_embed_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose diagnostic logging.",
+    )
+
+    # ================================================================
+    # SPLIT-EXTRACT (MULTI-CARRIER)
+    # ================================================================
+    split_extract_parser = subparsers.add_parser(
+        "split-extract",
+        help="Reconstruct a payload from multiple carrier fragments.",
+        description="Re-assemble and decrypt a payload split across 2 or more carriers.",
+    )
+
+    split_extract_parser.add_argument(
+        "-c",
+        "--carriers",
+        required=True,
+        nargs="+",
+        type=Path,
+        help="List of all carrier files belonging to the multi-carrier bundle.",
+    )
+
+    split_extract_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        type=Path,
+        help="Output directory or specific destination file for recovered payload.",
+    )
+
+    split_extract_parser.add_argument(
+        "--password",
+        default=None,
+        help="Decryption password. If omitted, GhostWire prompts securely.",
+    )
+
+    split_extract_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Overwrite destination file if it already exists.",
+    )
+
+    split_extract_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose diagnostic logging.",
+    )
+
     return parser
 
 
 def run_capacity(args: argparse.Namespace) -> int:
-    """
-    Run the capacity inspection command.
-    """
+    """Run carrier capacity query."""
     service = StegoService()
     info = service.get_capacity(args.carrier)
 
@@ -226,10 +360,40 @@ def run_capacity(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_analyze(args: argparse.Namespace) -> int:
+    """Run forensic steganalysis on carrier media."""
+    print(f"[*] Running Steganalysis on: {args.carrier.resolve()}...")
+    report = Steganalyzer.analyze_carrier(args.carrier)
+
+    print(f"[+] Media Type: {report.media_type}")
+    print("\n[+] Forensic Metrics:")
+    print(f"    1. Chi-Square (Pairs of Values) Statistic: {report.chi2_stat:.2f} (DoF: {report.chi2_dof})")
+    print(f"       -> p-value: {report.chi2_p_value:.6f}")
+    print(f"    2. LSB Transition Rate: {report.lsb_transition_rate:.4f} (Uniform random baseline: 0.5000)")
+    print(f"       -> Estimated Embedding Rate: {report.estimated_embedding_rate * 100:.1f}%")
+    print(f"    3. Local Block LSB Entropy: {report.mean_chunk_entropy:.4f} / 1.0000")
+    print(f"       -> Spatial Variance: {report.chunk_entropy_variance:.6f}")
+
+    if args.verbose:
+        print("\n[+] Detailed Findings:")
+        for detail in report.details:
+            print(f"    - {detail}")
+
+    print(f"\n[+] Forensic Verdict: {report.verdict}")
+    print(f"[+] Confidence Level: {report.confidence}")
+
+    if args.dump_lsb:
+        if args.carrier.suffix.lower() != ".png":
+            print("[!] Warning: --dump-lsb visual plane export is supported for PNG images only.", file=sys.stderr)
+        else:
+            out_map = Steganalyzer.dump_lsb_map(args.carrier, args.dump_lsb)
+            print(f"[+] Visual LSB Bitplane Map exported: {out_map.resolve()}")
+
+    return 0
+
+
 def run_embed(args: argparse.Namespace) -> int:
-    """
-    Run the embed operation.
-    """
+    """Run single carrier embedding."""
     password = get_password(args.password, confirm=True)
     service = StegoService()
 
@@ -248,29 +412,87 @@ def run_embed(args: argparse.Namespace) -> int:
 
 
 def run_extract(args: argparse.Namespace) -> int:
-    """
-    Run the extraction operation.
-    """
+    """Run extraction (auto-delegating to multi-carrier if multiple carriers passed)."""
     password = get_password(args.password, confirm=False)
-    service = StegoService()
 
-    output_path = service.extract(
-        carrier_path=args.carrier,
-        output_directory=args.output,
-        password=password,
-        force=args.force,
-        show_progress=True,
-        verbose=args.verbose,
-    )
+    if len(args.carriers) > 1:
+        # Multi-carrier extraction
+        mc_service = MultiCarrierService()
+        output_path = mc_service.reconstruct_and_extract(
+            carrier_paths=args.carriers,
+            output_target=args.output,
+            password=password,
+            force=args.force,
+            verbose=args.verbose,
+            show_progress=True,
+        )
+        print(f"[+] Multi-carrier payload successfully reconstructed: {output_path}")
+        return 0
+
+    # Single carrier extraction
+    service = StegoService()
+    try:
+        output_path = service.extract(
+            carrier_path=args.carriers[0],
+            output_directory=args.output,
+            password=password,
+            force=args.force,
+            show_progress=True,
+            verbose=args.verbose,
+        )
+    except ValueError as exc:
+        # Check if user tried extracting a multi-carrier segment with single extract
+        if "Multi-Carrier Bundle detected" in str(exc):
+            raise
+        # Re-raise clean error
+        raise
 
     print(f"[+] Payload successfully extracted: {output_path}")
     return 0
 
 
+def run_split_embed(args: argparse.Namespace) -> int:
+    """Run multi-carrier proportional embedding."""
+    password = get_password(args.password, confirm=True)
+    mc_service = MultiCarrierService()
+
+    written = mc_service.split_and_embed(
+        payload_path=args.payload,
+        carrier_paths=args.carriers,
+        output_paths=args.outputs,
+        password=password,
+        force=args.force,
+        verbose=args.verbose,
+        show_progress=True,
+    )
+
+    print(f"[+] Multi-carrier payload successfully split and embedded across {len(written)} carriers:")
+    for out in written:
+        print(f"    - {out}")
+
+    return 0
+
+
+def run_split_extract(args: argparse.Namespace) -> int:
+    """Run multi-carrier reassembly and extraction."""
+    password = get_password(args.password, confirm=False)
+    mc_service = MultiCarrierService()
+
+    output_path = mc_service.reconstruct_and_extract(
+        carrier_paths=args.carriers,
+        output_target=args.output,
+        password=password,
+        force=args.force,
+        verbose=args.verbose,
+        show_progress=True,
+    )
+
+    print(f"[+] Multi-carrier payload successfully reconstructed: {output_path}")
+    return 0
+
+
 def main() -> int:
-    """
-    Main GhostWire entry point.
-    """
+    """Main GhostWire entry point."""
     parser = build_parser()
 
     try:
@@ -279,11 +501,20 @@ def main() -> int:
         if args.command == "capacity":
             return run_capacity(args)
 
+        if args.command == "analyze":
+            return run_analyze(args)
+
         if args.command == "embed":
             return run_embed(args)
 
         if args.command == "extract":
             return run_extract(args)
+
+        if args.command == "split-embed":
+            return run_split_embed(args)
+
+        if args.command == "split-extract":
+            return run_split_extract(args)
 
         parser.error("A valid command is required.")
 
