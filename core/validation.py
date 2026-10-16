@@ -65,6 +65,7 @@ def validate_carrier(carrier_path: Path) -> None:
 def validate_output_path(
     output_path: Path,
     carrier_path: Path,
+    force: bool = False,
 ) -> None:
     """
     Validate the output carrier path.
@@ -89,9 +90,9 @@ def validate_output_path(
             "Output file cannot be the same as the carrier file."
         )
 
-    if output_path.exists():
+    if output_path.exists() and not force:
         raise ValidationError(
-            f"Output file already exists: {output_path}"
+            f"Output file already exists: {output_path}. Use --force to overwrite."
         )
 
 

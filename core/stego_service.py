@@ -1,39 +1,62 @@
 """
 GhostWire high-level steganography service.
 
-Connects payload processing, randomized positions,
-and PNG LSB embedding/extraction.
+Coordinates payload processing, invariant carrier fingerprinting,
+salted position randomization, and carrier LSB embedding/extraction.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any
 
 from core.audio_stego import AudioStego
 from core.image_stego import ImageStego
-from core.packet import HEADER_SIZE, PacketHeader
+from core.packet import HEADER_SIZE_V1, HEADER_SIZE_V2, PacketHeader
 from core.payload import PayloadProcessor
 from core.randomizer import Randomizer
 
 from .validation import (
     validate_carrier,
-    validate_output_directory,
     validate_output_path,
     validate_password,
     validate_payload,
 )
 
 
-def get_carrier_engine(carrier_path: Path) -> ImageStego | AudioStego:
+def get_carrier_engine(carrier_path: Path | str) -> ImageStego | AudioStego:
     """Return the appropriate steganography engine for the carrier file."""
-    ext = carrier_path.suffix.lower()
+    path = Path(carrier_path)
+    ext = path.suffix.lower()
     if ext == ".png":
-        return ImageStego(carrier_path)
+        return ImageStego(path)
     if ext == ".wav":
-        return AudioStego(carrier_path)
-    raise ValueError(f"Unsupported carrier format: {ext}")
+        return AudioStego(path)
+    raise ValueError(
+        f"Unsupported carrier format '{ext}'. Supported formats: .png, .wav"
+    )
 
 
 class StegoService:
-    """High-level GhostWire embed/extract service."""
+    """High-level GhostWire embed/extract/capacity service."""
+
+    def get_capacity(self, carrier_path: str | Path) -> dict[str, Any]:
+        """
+        Query carrier capacity and metadata.
+
+        Args:
+            carrier_path: Path to PNG or WAV carrier.
+
+        Returns:
+            Dictionary with carrier type, dimensions/channels, and capacity metrics.
+        """
+        carrier_path = Path(carrier_path)
+        if not carrier_path.is_file():
+            raise FileNotFoundError(f"Carrier file not found: {carrier_path}")
+
+        validate_carrier(carrier_path)
+        stego = get_carrier_engine(carrier_path)
+        return stego.get_carrier_info(carrier_path)
 
     def embed(
         self,
@@ -41,83 +64,97 @@ class StegoService:
         carrier_path: str | Path,
         output_path: str | Path,
         password: str,
-    ):
+        force: bool = False,
+        show_progress: bool = True,
+        verbose: bool = False,
+    ) -> Path:
         """
-        Embed a payload file into a PNG carrier.
+        Embed a payload file into a digital carrier (PNG or WAV).
 
-        Parameters
-        ----------
-        payload_path:
-            Path to the file that will be hidden.
-
-        carrier_path:
-            Path to the PNG carrier image.
-
-        output_path:
-            Path where the resulting stego image will be written.
-
-        password:
-            Password used for payload protection and
-            randomized embedding positions.
+        Security Pipeline:
+            file -> SHA-256 -> zlib -> AES-256-GCM -> metadata -> v2 header (with salt)
+            carrier -> invariant MSB fingerprint -> header positions (pwd + fp)
+            salt -> payload positions (pwd + fp + salt, excluding header)
+            -> LSB embedding -> stego carrier
         """
-
         payload_path = Path(payload_path)
         carrier_path = Path(carrier_path)
         output_path = Path(output_path)
 
-        # Missing files should produce FileNotFoundError.
         if not payload_path.is_file():
-            raise FileNotFoundError(
-                f"Payload file not found: {payload_path}"
-            )
+            raise FileNotFoundError(f"Payload file not found: {payload_path}")
 
         if not carrier_path.is_file():
-            raise FileNotFoundError(
-                f"Carrier image not found: {carrier_path}"
-            )
+            raise FileNotFoundError(f"Carrier file not found: {carrier_path}")
 
-        # Normal validation after existence checks.
         validate_payload(payload_path)
         validate_carrier(carrier_path)
-        validate_output_path(
-            output_path,
-            carrier_path,
-        )
+        validate_output_path(output_path, carrier_path, force=force)
         validate_password(password)
 
-        processor = PayloadProcessor(password)
-
-        prepared = processor.prepare(
-            payload_path
-        )
-
-        packet = prepared.packet
-
         stego = get_carrier_engine(carrier_path)
+        capacity = stego.calculate_capacity(carrier_path)
 
-        capacity = stego.calculate_capacity(
-            carrier_path
-        )
+        processor = PayloadProcessor(password)
+        prepared = processor.prepare(payload_path)
 
-        required_bits = len(packet) * 8
+        header_bytes = prepared.packet[:HEADER_SIZE_V2]
+        body = prepared.packet[HEADER_SIZE_V2:]
+        header = PacketHeader.deserialize(header_bytes)
 
-        if required_bits > capacity:
+        header_bits = len(header_bytes) * 8
+        body_bits = len(body) * 8
+        total_required_bits = header_bits + body_bits
+
+        if total_required_bits > capacity:
+            req_kb = round(total_required_bits / (8 * 1024), 2)
+            cap_kb = round(capacity / (8 * 1024), 2)
             raise ValueError(
-                "Carrier does not have enough capacity "
-                "for the payload."
+                f"Carrier capacity exceeded: payload packet requires {total_required_bits} bits "
+                f"({req_kb} KB), but carrier only holds {capacity} bits ({cap_kb} KB)."
             )
 
-        randomizer = Randomizer(password)
+        # 1. Derive invariant carrier fingerprint (LSB-masked)
+        carrier_fingerprint = stego.calculate_fingerprint(carrier_path)
 
-        positions = randomizer.generate_positions(
+        # 2. Derive non-colliding header positions from (password + carrier_fingerprint)
+        header_randomizer = Randomizer(
+            password=password,
+            carrier_fingerprint=carrier_fingerprint,
+        )
+        header_positions = header_randomizer.generate_positions(
             total_pixels=capacity,
-            required_bits=required_bits,
+            required_bits=header_bits,
         )
 
+        # 3. Derive body positions from (password + carrier_fingerprint + random salt)
+        # Excludes header positions to guarantee zero collisions
+        body_randomizer = Randomizer(
+            password=password,
+            carrier_fingerprint=carrier_fingerprint,
+            salt=header.salt,
+        )
+        body_positions = body_randomizer.generate_positions(
+            total_pixels=capacity,
+            required_bits=body_bits,
+            exclude_positions=header_positions,
+        )
+
+        if verbose:
+            print(f"[*] Carrier capacity: {capacity} bits ({(capacity // 8):,} bytes)")
+            print(f"[*] Carrier fingerprint: {carrier_fingerprint.hex()[:16]}...")
+            print(f"[*] Random position salt: {header.salt.hex()}")
+            print(f"[*] Header bits: {header_bits}, Body bits: {body_bits}")
+
+        # Combined sequential stream and positions
+        all_data = header_bytes + body
+        all_positions = header_positions + body_positions
+
         stego.embed(
-            data=packet,
-            positions=positions,
+            data=all_data,
+            positions=all_positions,
             output_path=output_path,
+            show_progress=show_progress,
         )
 
         return output_path
@@ -127,130 +164,160 @@ class StegoService:
         carrier_path: str | Path,
         output_directory: str | Path,
         password: str,
-    ):
+        force: bool = False,
+        show_progress: bool = True,
+        verbose: bool = False,
+    ) -> Path:
         """
-        Extract a payload from a GhostWire PNG.
+        Extract and decrypt a payload from a GhostWire carrier.
 
         Parameters
         ----------
         carrier_path:
-            Path to the stego PNG image.
-
+            Path to the stego PNG or WAV carrier.
         output_directory:
-            Directory where the recovered payload will be written.
-
+            Directory or specific filename where the recovered payload will be written.
         password:
             Password used during embedding.
+        force:
+            Allow overwriting the output file if it exists.
+        show_progress:
+            Show progress bar for large payloads.
+        verbose:
+            Print diagnostic details.
         """
-
         carrier_path = Path(carrier_path)
-        output_directory = Path(output_directory)
+        output_target = Path(output_directory)
 
-        # Missing carrier should produce FileNotFoundError.
         if not carrier_path.is_file():
-            raise FileNotFoundError(
-                f"Carrier image not found: {carrier_path}"
-            )
+            raise FileNotFoundError(f"Carrier file not found: {carrier_path}")
 
         validate_carrier(carrier_path)
-        validate_output_directory(output_directory)
         validate_password(password)
 
-        output_directory.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
         stego = get_carrier_engine(carrier_path)
+        capacity = stego.calculate_capacity(carrier_path)
 
-        capacity = stego.calculate_capacity(
-            carrier_path
+        carrier_fingerprint = stego.calculate_fingerprint(carrier_path)
+
+        # ---------------------------------------------------------
+        # Step 1: Recover bootstrap header
+        # ---------------------------------------------------------
+        header_bits_v2 = HEADER_SIZE_V2 * 8
+
+        if header_bits_v2 > capacity:
+            raise ValueError("Carrier is too small to contain a GhostWire header.")
+
+        header_randomizer = Randomizer(
+            password=password,
+            carrier_fingerprint=carrier_fingerprint,
         )
-
-        randomizer = Randomizer(password)
-
-        # ---------------------------------------------------------
-        # Step 1: Recover the fixed-size GhostWire header.
-        # ---------------------------------------------------------
-
-        header_bits = HEADER_SIZE * 8
-
-        if header_bits > capacity:
-            raise ValueError(
-                "Carrier is too small to contain a "
-                "GhostWire header."
-            )
-
-        header_positions = randomizer.generate_positions(
+        header_positions = header_randomizer.generate_positions(
             total_pixels=capacity,
-            required_bits=header_bits,
+            required_bits=header_bits_v2,
         )
 
         header_data = stego.extract(
-            bit_count=header_bits,
+            bit_count=header_bits_v2,
             positions=header_positions,
         )
 
-        header = PacketHeader.deserialize(
-            header_data
-        )
+        try:
+            header = PacketHeader.deserialize(header_data)
+        except ValueError:
+            # Check for legacy v1 fallback
+            try:
+                v1_pos = Randomizer(password).generate_positions(
+                    capacity, HEADER_SIZE_V1 * 8
+                )
+                v1_data = stego.extract(HEADER_SIZE_V1 * 8, v1_pos)
+                header = PacketHeader.deserialize(v1_data)
+            except Exception as exc:
+                raise ValueError(
+                    "Extraction failed: invalid GhostWire header. "
+                    "Verify that the correct password and carrier file were provided."
+                ) from exc
+
+        if verbose:
+            print(f"[*] Carrier capacity: {capacity} bits ({(capacity // 8):,} bytes)")
+            print(f"[*] Carrier fingerprint: {carrier_fingerprint.hex()[:16]}...")
+            print(f"[*] GhostWire Protocol Version: {header.version}")
+            if header.version == 2:
+                print(f"[*] Extracted position salt: {header.salt.hex()}")
+            print(f"[*] Encrypted body size: {header.packet_size:,} bytes")
 
         # ---------------------------------------------------------
-        # Step 2: Determine the complete packet size.
+        # Step 2: Extract body bits using version-appropriate randomizer
         # ---------------------------------------------------------
+        body_bits = header.packet_size * 8
+        total_packet_bits = (header.header_size + header.packet_size) * 8
 
-        total_packet_size = (
-            HEADER_SIZE
-            + header.packet_size
-        )
-
-        total_bits = total_packet_size * 8
-
-        if total_bits > capacity:
+        if total_packet_bits > capacity:
             raise ValueError(
-                "Packet size exceeds carrier capacity."
+                f"Corrupted packet: declared size ({total_packet_bits} bits) "
+                f"exceeds carrier capacity ({capacity} bits)."
+            )
+
+        if header.version == 2:
+            body_randomizer = Randomizer(
+                password=password,
+                carrier_fingerprint=carrier_fingerprint,
+                salt=header.salt,
+            )
+            body_positions = body_randomizer.generate_positions(
+                total_pixels=capacity,
+                required_bits=body_bits,
+                exclude_positions=header_positions,
+            )
+            body_data = stego.extract(
+                bit_count=body_bits,
+                positions=body_positions,
+                show_progress=show_progress,
+            )
+            packet = header_data[:HEADER_SIZE_V2] + body_data
+        else:
+            # v1 legacy fallback: sequential randomizer
+            all_v1_positions = Randomizer(password).generate_positions(
+                total_pixels=capacity,
+                required_bits=total_packet_bits,
+            )
+            packet = stego.extract(
+                bit_count=total_packet_bits,
+                positions=all_v1_positions,
+                show_progress=show_progress,
             )
 
         # ---------------------------------------------------------
-        # Step 3: Generate the complete deterministic
-        # randomized position sequence.
+        # Step 3: Decrypt and decompress the payload
         # ---------------------------------------------------------
-
-        all_positions = randomizer.generate_positions(
-            total_pixels=capacity,
-            required_bits=total_bits,
-        )
-
-        # ---------------------------------------------------------
-        # Step 4: Extract the complete packet.
-        # ---------------------------------------------------------
-
-        packet = stego.extract(
-            bit_count=total_bits,
-            positions=all_positions,
-        )
-
-        # ---------------------------------------------------------
-        # Step 5: Recover and decrypt/decompress the payload.
-        # ---------------------------------------------------------
-
         processor = PayloadProcessor(password)
-
-        recovered = processor.recover(
-            packet
-        )
+        try:
+            recovered = processor.recover(packet)
+        except Exception as exc:
+            raise ValueError(
+                "Payload decryption/verification failed. "
+                "Possible wrong password, tampered carrier, or corrupted data."
+            ) from exc
 
         # ---------------------------------------------------------
-        # Step 6: Write recovered payload.
+        # Step 4: Write recovered payload
         # ---------------------------------------------------------
+        # Support both directory target and explicit output file path
+        if (
+            output_target.is_dir()
+            or str(output_directory).endswith(("/", "\\"))
+            or not output_target.suffix
+        ):
+            output_target.mkdir(parents=True, exist_ok=True)
+            destination = output_target / recovered.filename
+        else:
+            output_target.parent.mkdir(parents=True, exist_ok=True)
+            destination = output_target
 
-        output_path = (
-            output_directory
-            / recovered.filename
-        )
+        if destination.exists() and not force:
+            raise ValueError(
+                f"Output file already exists: {destination}. Use --force to overwrite."
+            )
 
-        output_path.write_bytes(
-            recovered.data
-        )
-
-        return output_path
+        destination.write_bytes(recovered.data)
+        return destination

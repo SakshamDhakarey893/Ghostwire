@@ -7,11 +7,18 @@ PCM audio files (WAV).
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Sequence
 import wave
 
+import numpy as np
+from tqdm import tqdm
+
 from core.utils import bits_to_bytes, bytes_to_bits
+
+# Minimum bits required to trigger live CLI progress bar (50 KB payload).
+PROGRESS_THRESHOLD_BITS = 50 * 1024 * 8
 
 
 class AudioStego:
@@ -67,11 +74,56 @@ class AudioStego:
         params, _ = AudioStego._load_audio(audio_path)
         return params.nframes * params.nchannels
 
+    @staticmethod
+    def calculate_fingerprint(audio_path: str | Path) -> bytes:
+        """
+        Calculate an invariant SHA-256 fingerprint from WAV audio metadata and MSBs.
+
+        By zeroing out the least significant bit (LSB) of each sample, the
+        fingerprint is guaranteed to be byte-for-byte identical before embedding
+        and after embedding.
+        """
+        params, raw_frames = AudioStego._load_audio(Path(audio_path))
+        hasher = hashlib.sha256()
+        hasher.update(
+            f"AUD:{params.nchannels}:{params.sampwidth}:{params.framerate}:{params.nframes}".encode(
+                "utf-8"
+            )
+        )
+        arr = np.frombuffer(raw_frames, dtype=np.uint8).copy()
+        # In little-endian PCM, sample LSB is at index [i * sampwidth]. Mask it out.
+        arr[:: params.sampwidth] &= 0xFE
+        hasher.update(arr.tobytes())
+        return hasher.digest()
+
+    @staticmethod
+    def get_carrier_info(audio_path: str | Path) -> dict[str, str | int | float]:
+        """Return descriptive metadata and capacity metrics for the audio carrier."""
+        params, _ = AudioStego._load_audio(Path(audio_path))
+        total_samples = params.nframes * params.nchannels
+        duration = (
+            round(params.nframes / params.framerate, 2)
+            if params.framerate > 0
+            else 0.0
+        )
+        return {
+            "type": "Audio",
+            "format": "WAV",
+            "channels": params.nchannels,
+            "sample_width": params.sampwidth * 8,
+            "framerate": params.framerate,
+            "frames": params.nframes,
+            "duration_seconds": duration,
+            "capacity_bits": total_samples,
+            "capacity_bytes": total_samples // 8,
+        }
+
     def embed(
         self,
         data: bytes,
         positions: Sequence[int],
         output_path: str | Path,
+        show_progress: bool = False,
     ) -> None:
         """
         Embed binary data into randomized sample LSB positions.
@@ -80,6 +132,7 @@ class AudioStego:
             data: Binary payload to embed.
             positions: Sequence of unique sample indices.
             output_path: Destination path for the stego WAV file.
+            show_progress: Whether to show live progress bar for large payloads.
 
         Raises:
             ValueError: If capacity is insufficient or output path is invalid.
@@ -93,10 +146,27 @@ class AudioStego:
         total_samples = params.nframes * params.nchannels
 
         if len(bits) > len(positions):
-            raise ValueError("Not enough carrier capacity for payload.")
+            raise ValueError(
+                f"Not enough carrier capacity for payload. Required: {len(bits)} bits, "
+                f"available positions: {len(positions)} bits."
+            )
 
         sampwidth = params.sampwidth
-        for bit, sample_index in zip(bits, positions):
+        use_progress = show_progress and (len(bits) >= PROGRESS_THRESHOLD_BITS)
+        iterator = (
+            tqdm(
+                zip(bits, positions),
+                total=len(bits),
+                desc="[>] Embedding audio bits",
+                unit="bit",
+                unit_scale=True,
+                leave=False,
+            )
+            if use_progress
+            else zip(bits, positions)
+        )
+
+        for bit, sample_index in iterator:
             if sample_index < 0 or sample_index >= total_samples:
                 raise ValueError(
                     f"Sample position {sample_index} is out of bounds for audio carrier."
@@ -115,6 +185,7 @@ class AudioStego:
         self,
         bit_count: int,
         positions: Sequence[int],
+        show_progress: bool = False,
     ) -> bytes:
         """
         Extract binary data from selected sample LSB positions.
@@ -122,6 +193,7 @@ class AudioStego:
         Args:
             bit_count: Number of bits to recover (must be divisible by 8).
             positions: Sequence of sample positions.
+            show_progress: Whether to show live progress bar for large payloads.
 
         Returns:
             Recovered bytes.
@@ -136,14 +208,32 @@ class AudioStego:
             raise ValueError("Bit count must be divisible by 8.")
 
         if bit_count > len(positions):
-            raise ValueError("Not enough positions for requested extraction.")
+            raise ValueError(
+                f"Not enough positions for requested extraction. "
+                f"Requested: {bit_count} bits, available: {len(positions)} bits."
+            )
 
         params, raw_frames = self._load_audio(self.audio_path)
         total_samples = params.nframes * params.nchannels
         sampwidth = params.sampwidth
 
+        use_progress = show_progress and (bit_count >= PROGRESS_THRESHOLD_BITS)
+        pos_slice = positions[:bit_count]
+        iterator = (
+            tqdm(
+                pos_slice,
+                total=bit_count,
+                desc="[<] Extracting audio bits",
+                unit="bit",
+                unit_scale=True,
+                leave=False,
+            )
+            if use_progress
+            else pos_slice
+        )
+
         bits: list[int] = []
-        for sample_index in positions[:bit_count]:
+        for sample_index in iterator:
             if sample_index < 0 or sample_index >= total_samples:
                 raise ValueError(
                     f"Sample position {sample_index} is out of bounds for audio carrier."

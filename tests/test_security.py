@@ -113,13 +113,13 @@ def test_tampered_stego_image_fails_extraction(
     pixels = image.load()
 
     capacity = ImageStego.calculate_capacity(stego_image)
-    positions = Randomizer("password").generate_positions(
+    fp = ImageStego.calculate_fingerprint(stego_image)
+    positions = Randomizer("password", carrier_fingerprint=fp).generate_positions(
         total_pixels=capacity,
-        required_bits=64,
+        required_bits=192,
     )
     tamper_pos = positions[0]
-    channel_positions = ImageStego._channel_positions(image)
-    x, y, channel = channel_positions[tamper_pos]
+    x, y, channel = ImageStego.index_to_coord(tamper_pos, image.width)
 
     pixel = list(pixels[x, y])
     pixel[channel] ^= 1

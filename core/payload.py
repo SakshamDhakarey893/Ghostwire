@@ -135,7 +135,7 @@ class PayloadProcessor:
 
         header = PacketHeader.deserialize(packet)
 
-        packet_start = 8
+        packet_start = header.header_size
         packet_end = packet_start + header.packet_size
 
         if len(packet) < packet_end:
