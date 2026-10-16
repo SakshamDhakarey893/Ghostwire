@@ -17,6 +17,7 @@ from core.stego_service import StegoService
 from core.validation import ValidationError
 
 VERSION = "2.1.0"
+__version__ = VERSION
 
 
 def format_bytes(num_bytes: int) -> str:

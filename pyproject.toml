@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghostwire-stego"
+version = "2.1.0"
+description = "Professional Randomized LSB Steganography, Multi-Carrier Splitting & Steganalysis Framework"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    { name = "Saksham Dhakarey" }
+]
+keywords = [
+    "steganography",
+    "cryptography",
+    "security",
+    "lsb",
+    "steganalysis",
+    "aes-256-gcm",
+    "forensics",
+    "audio-steganography",
+    "image-steganography",
+    "multi-carrier"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security :: Cryptography",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "cryptography>=41.0.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+]
+
+[project.scripts]
+ghostwire = "ghostwire:main"
+
+[project.urls]
+Homepage = "https://github.com/SakshamDhakarey893/Ghostwire"
+Repository = "https://github.com/SakshamDhakarey893/Ghostwire"
+Issues = "https://github.com/SakshamDhakarey893/Ghostwire/issues"
+
+[tool.setuptools]
+py-modules = ["ghostwire"]
+packages = ["core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

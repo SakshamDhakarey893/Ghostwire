@@ -3,6 +3,7 @@
 > Hide. Encrypt. Transmit. Undetected.
 
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/SakshamDhakarey893/Ghostwire/actions/workflows/ci.yml/badge.svg)](https://github.com/SakshamDhakarey893/Ghostwire/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-73%20passed%20(100%25)-brightgreen.svg)](tests/)
 [![Security](https://img.shields.io/badge/cipher-AES--256--GCM-red.svg)](core/crypto.py)
@@ -52,6 +53,10 @@ GhostWire is an enterprise-grade steganography and steganalysis framework writte
 
 ```text
 Ghostwire/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml               # Cross-platform matrix test & build CI
+│       └── release-binaries.yml # Standalone binary build & release workflow
 ├── carriers/
 │   ├── audio/              # Sample WAV carrier files
 │   └── images/             # Sample PNG carrier files
@@ -70,6 +75,8 @@ Ghostwire/
 │   ├── stego_service.py    # Single-carrier orchestration service
 │   ├── utils.py            # Coordinate math & bit manipulation utilities
 │   └── validation.py       # Input validation & security constraints
+├── scripts/
+│   └── build_binary.py     # Standalone PyInstaller native binary builder
 ├── tests/                  # 73-test automated test suite (100% pass rate)
 │   ├── test_audio_stego.py
 │   ├── test_cli.py
@@ -90,6 +97,7 @@ Ghostwire/
 │   ├── test_steganalysis_engine.py
 │   └── test_stego_service.py
 ├── ghostwire.py            # Unified CLI entry point
+├── pyproject.toml          # PEP 517/621 packaging & metadata configuration
 ├── requirements.txt        # Runtime dependencies
 ├── LICENSE                 # MIT License
 └── README.md               # Framework documentation
@@ -164,11 +172,34 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-Install dependencies:
+Install dependencies and register GhostWire globally:
 
 ```bash
+# Standard dependency install
 pip install -r requirements.txt
+
+# Or install as an editable CLI command in your environment
+pip install -e .
 ```
+
+Once installed, `ghostwire` can be executed directly from anywhere in your terminal:
+
+```bash
+ghostwire --help
+```
+
+### Standalone Executable (No Python Required)
+
+To compile a native, single-file binary for your current operating system:
+
+```bash
+python scripts/build_binary.py
+```
+
+The compiled binary will be located in `dist/binaries/`:
+- **Windows**: `dist/binaries/ghostwire-windows-x64.exe`
+- **Linux**: `dist/binaries/ghostwire-linux-x64`
+- **macOS**: `dist/binaries/ghostwire-macos-x64`
 
 ---
 
