@@ -2,7 +2,7 @@
 
 > Hide. Encrypt. Transmit. Undetected.
 
-[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/SakshamDhakarey893/Ghostwire/actions/workflows/ci.yml/badge.svg)](https://github.com/SakshamDhakarey893/Ghostwire/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-73%20passed%20(100%25)-brightgreen.svg)](tests/)
